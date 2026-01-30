@@ -1,65 +1,4 @@
-const MORSE_TABLE = {
-	".-": "A",
-	"-...": "B",
-	"-.-.": "C",
-	"-..": "D",
-	".": "E",
-	"..-.": "F",
-	"--.": "G",
-	"....": "H",
-	"..": "I",
-	".---": "J",
-	"-.-": "K",
-	".-..": "L",
-	"--": "M",
-	"-.": "N",
-	"---": "O",
-	".--.": "P",
-	"--.-": "Q",
-	".-.": "R",
-	"...": "S",
-	"-": "T",
-	"..-": "U",
-	"...-": "V",
-	".--": "W",
-	"-..-": "X",
-	"-.--": "Y",
-	"--..": "Z",
-	"-----": "0",
-	".----": "1",
-	"..---": "2",
-	"...--": "3",
-	"....-": "4",
-	".....": "5",
-	"-....": "6",
-	"--...": "7",
-	"---..": "8",
-	"----.": "9",
-	".-.-.-": ".",
-	"--..--": ",",
-	"..--..": "?",
-	".----.": "'",
-	"-.-.--": "!",
-	"-..-.": "/",
-	"-.--.": "(",
-	"-.--.-": ")",
-	".-...": "&",
-	"---...": ":",
-	"-.-.-.": ";",
-	"-...-": "=",
-	".-.-.": "+",
-	"-....-": "-",
-	"..--.-": "_",
-	".-..-.": "\"",
-	"...-..-": "$",
-	".--.-.": "@"
-};
-
-const decodeMarks = (marks) => {
-	if (!marks.length) return "";
-	const key = marks.join("");
-	return MORSE_TABLE[key] || "?";
-};
+import MorseDecoder from "morse-pro/lib/morse-pro-decoder";
 
 class CwDecoderEngine {
 	constructor() {
@@ -68,63 +7,125 @@ class CwDecoderEngine {
 
 	reset() {
 		this.isRecording = false;
-		this.lastMarkEndAt = 0;
-		this.currentMarks = [];
-		this.lastDecodedAt = 0;
-		this.nextWordSpacePending = false;
+		this.lastEventAt = 0;
+		this.unitEstimateMs = 0;
+		this.charGapUnits = 3;
+		this.wordGapUnits = 10;
+		const callback = this.messageCallback || (() => {});
+		this.decoder = new MorseDecoder({
+			wpm: 20,
+			messageCallback: callback
+		});
+		this.decoder.noiseThreshold = 0;
+	}
+
+	setMessageCallback(cb) {
+		this.messageCallback = cb || (() => {});
+		if (this.decoder) {
+			this.decoder.messageCallback = this.messageCallback;
+		}
 	}
 
 	ensureRecordingSession() {
 		if (this.isRecording) return;
 		this.isRecording = true;
-		this.currentMarks = [];
+		this.lastEventAt = 0;
 	}
 
-	/**
-	 * 方案A：recordMark 只记录 tone，不再自动追加 1u gap。
-	 * gap 只来自：
-	 *  1) 调度 startAt 与 recordCursorMs 的差（lead silence）
-	 *  2) 外部显式 extendGap（字符/单词超时）
-	 */
-	recordMark(mark, startAt, unitMs) {
+	updateUnitEstimate(gapMs, fallbackUnitMs) {
+		if (gapMs <= 0) return;
+		const base = this.unitEstimateMs || fallbackUnitMs;
+		if (!base) return;
+		let estimate = 0;
+		if (gapMs >= base * 0.5 && gapMs <= base * 2.2) {
+			estimate = gapMs;
+		} else if (gapMs > base * 2.2 && gapMs <= base * 4.5) {
+			estimate = gapMs / this.charGapUnits;
+		} else if (gapMs > base * 4.5 && gapMs <= base * 14) {
+			estimate = gapMs / this.wordGapUnits;
+		}
+		if (!estimate) return;
+		const alpha = 0.25;
+		this.unitEstimateMs = this.unitEstimateMs
+			? this.unitEstimateMs * (1 - alpha) + estimate * alpha
+			: estimate;
+	}
+
+	getUnitEstimateMs(fallbackUnitMs) {
+		return this.unitEstimateMs || fallbackUnitMs;
+	}
+
+	getCharGapMs(fallbackUnitMs) {
+		const unit = this.getUnitEstimateMs(fallbackUnitMs);
+		return unit ? unit * this.charGapUnits : 0;
+	}
+
+	getWordGapMs(fallbackUnitMs) {
+		const unit = this.getUnitEstimateMs(fallbackUnitMs);
+		return unit ? unit * this.wordGapUnits : 0;
+	}
+
+	updateUnitEstimateFromTone(toneMs, fallbackUnitMs) {
+		if (!toneMs) return;
+		const base = this.unitEstimateMs || fallbackUnitMs;
+		if (!base) return;
+		let estimate = 0;
+		if (toneMs <= base * 2) {
+			estimate = toneMs;
+		} else if (toneMs <= base * 4) {
+			estimate = toneMs / 3;
+		}
+		if (!estimate) return;
+		const alpha = 0.2;
+		this.unitEstimateMs = this.unitEstimateMs
+			? this.unitEstimateMs * (1 - alpha) + estimate * alpha
+			: estimate;
+	}
+
+	recordMark(mark, startAt, unitMs, wpm) {
 		this.ensureRecordingSession();
-		if (this.lastMarkEndAt) {
-			const gapMs = Math.max(0, startAt - this.lastMarkEndAt);
-			if (gapMs >= unitMs * 10) {
-				this.nextWordSpacePending = true;
+		if (this.decoder && this.decoder.wpm !== wpm) {
+			this.decoder.setWPM(wpm);
+		}
+		if (this.lastEventAt) {
+			const gapMs = Math.max(0, startAt - this.lastEventAt);
+			if (gapMs > 0) {
+				this.updateUnitEstimate(gapMs, unitMs);
+				this.decoder.addTiming(-gapMs);
+				this.lastEventAt = startAt;
 			}
 		}
 		const markUnits = mark === "-" ? 3 : 1;
 		const toneMs = unitMs * markUnits;
-		this.lastMarkEndAt = startAt + toneMs;
-		this.currentMarks.push(mark);
+		this.decoder.addTiming(toneMs);
+		this.lastEventAt = startAt + toneMs;
+		return null;
 	}
 
-	flushChar(withSpace) {
-		if (!this.currentMarks.length) {
-			return { text: "", withSpace: false };
+	addSilence(gapMs, unitMs, wpm) {
+		if (!this.isRecording || gapMs <= 0) {
+			return;
 		}
-		const decoded = decodeMarks(this.currentMarks);
-		const shouldSpace = withSpace || this.nextWordSpacePending;
-		this.currentMarks = [];
-		if (decoded) {
-			this.lastDecodedAt = Date.now();
-			this.nextWordSpacePending = false;
+		if (this.decoder && this.decoder.wpm !== wpm) {
+			this.decoder.setWPM(wpm);
 		}
-		return { text: decoded, withSpace: shouldSpace };
+		this.updateUnitEstimate(gapMs, unitMs);
+		this.decoder.addTiming(-gapMs);
+		if (this.lastEventAt) {
+			this.lastEventAt += gapMs;
+		}
 	}
 
-	/**
-	 * stop 只做“收尾 flush”，不再依赖 gapExtraUnits。
-	 * 为了让最后一个字符稳定提交：确保尾部至少有 7u gap（单词结束语义）。
-	 */
-	stopRecordingAndDecode() {
+	stopRecordingAndDecode(unitMs, wpm) {
 		if (!this.isRecording) {
 			return { text: "", withSpace: false };
 		}
 		this.isRecording = false;
-		this.lastMarkEndAt = 0;
-		return this.flushChar(true);
+		const gapMs = this.getWordGapMs(unitMs) || unitMs * this.wordGapUnits;
+		this.addSilence(gapMs, unitMs, wpm);
+		this.decoder.flush();
+		this.lastEventAt = 0;
+		return { text: "", withSpace: false };
 	}
 }
 

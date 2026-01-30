@@ -1,14 +1,9 @@
 <template>
 	<view class="page">
+		<view class="content">
 		<hero-header />
 
 		<!-- spectrum-card removed temporarily -->
-
-		<control-card
-			@start="startAutoRepeat"
-			@stop="stopAutoRepeat"
-			@mark="enqueueMark"
-		/>
 
 		<decoder-card
 			:decoder-text="decoderText"
@@ -16,6 +11,18 @@
 			:tone-freq="toneFreq"
 			@wpm-change="onWpmChange"
 			@tone-change="onToneChange"
+		/>
+
+		</view>
+		<control-card
+			class="control-bottom"
+			:key-mode="keyMode"
+			@mode-change="onKeyModeChange"
+			@start="startAutoRepeat"
+			@stop="stopAutoRepeat"
+			@mark="enqueueMark"
+			@manual-start="onManualStart"
+			@manual-end="onManualEnd"
 		/>
 
 	</view>
@@ -84,6 +91,8 @@
 				cwDecoder: null,
 				recordStopTimer: null,
 				decoderQueueTimer: null,
+				keyMode: 'auto',
+				manualDownAt: 0,
 				wpm: 20,
 				toneFreq: 700,
 				inputQueue: [],
@@ -98,12 +107,16 @@
 				isKeying: false,
 				nextAvailableAt: 0,
 				lastScheduledEndAt: 0,
+				lastInputEndAt: 0,
 				scheduledTimers: [],
 				morseWave: null,
 				webAudioCtx: null,
 				dotBuffer: null,
 				dashBuffer: null,
 				useWebAudio: false,
+				manualOsc: null,
+				manualGain: null,
+				manualLooping: false,
 				dotAudioCtx: null,
 				dashAudioCtx: null,
 				audioReady: false,
@@ -156,6 +169,12 @@
 		},
 		onLoad() {
 			this.cwDecoder = new CwDecoderEngine()
+			this.cwDecoder.setMessageCallback((data) => {
+				if (!data || typeof data.message !== 'string') {
+					return
+				}
+				this.pushDecoderText(data.message)
+			})
 			this.resetFrequency()
 			this.intervalId = setInterval(this.tickSignals, TICK_MS)
 			this.noiseId = setInterval(this.spawnNoiseSignal, 800)
@@ -261,12 +280,15 @@
 				if (mark !== '.' && mark !== '-') {
 					return
 				}
+				if (this.keyMode !== 'auto') {
+					return
+				}
 				if (this.repeatTimers[mark]) {
 					return
 				}
 				this.keyDown[mark] = true
 				// Fire immediately, then schedule subsequent repeats off the timeline tail.
-				this.enqueueMark(mark)
+				this.handleMarkInput(mark, Date.now(), true)
 				this.scheduleRepeatTick(mark)
 			},
 			scheduleRepeatTick(mark) {
@@ -285,13 +307,16 @@
 					if (!this.keyDown[mark]) {
 						return
 					}
-					this.enqueueMark(mark)
+					this.handleMarkInput(mark, Date.now(), true)
 					this.scheduleRepeatTick(mark)
 				}, delayMs)
 				this.repeatTimers[mark] = timerId
 			},
 			stopAutoRepeat(mark) {
 				if (mark !== '.' && mark !== '-') {
+					return
+				}
+				if (this.keyMode !== 'auto') {
 					return
 				}
 				this.keyDown[mark] = false
@@ -308,9 +333,107 @@
 				this.stopAutoRepeat('.')
 				this.stopAutoRepeat('-')
 			},
-			enqueueMark(mark) {
+			onKeyModeChange(mode) {
+				this.keyMode = mode === 'manual' ? 'manual' : 'auto'
+				this.stopAllAutoRepeat()
+				this.manualDownAt = 0
+				this.stopManualTone()
+			},
+			onManualStart() {
+				if (this.keyMode !== 'manual') {
+					return
+				}
+				this.manualDownAt = Date.now()
+				this.startManualTone()
+			},
+			onManualEnd() {
+				if (this.keyMode !== 'manual') {
+					return
+				}
+				if (!this.manualDownAt) {
+					return
+				}
+				const duration = Date.now() - this.manualDownAt
+				const startAt = this.manualDownAt
+				this.manualDownAt = 0
+				this.stopManualTone()
+				const fallbackUnit = this.getUnitMs()
+				const unitMs = this.cwDecoder ? this.cwDecoder.getUnitEstimateMs(fallbackUnit) : fallbackUnit
+				const dotDelta = Math.abs(duration - unitMs)
+				const dashDelta = Math.abs(duration - unitMs * 3)
+				const mark = dashDelta < dotDelta ? '-' : '.'
+				if (this.cwDecoder) {
+					this.cwDecoder.updateUnitEstimateFromTone(duration, fallbackUnit)
+				}
+				this.handleMarkInput(mark, startAt, false)
+			},
+			startManualTone() {
+				this.isKeying = true
+				if (this.useWebAudio && this.webAudioCtx) {
+					const osc = this.webAudioCtx.createOscillator()
+					const gain = this.webAudioCtx.createGain()
+					osc.type = 'sine'
+					osc.frequency.value = this.toneFreq
+					gain.gain.value = 0.6
+					osc.connect(gain)
+					gain.connect(this.webAudioCtx.destination)
+					if (this.webAudioCtx.resume) {
+						this.webAudioCtx.resume()
+					}
+					osc.start(0)
+					this.manualOsc = osc
+					this.manualGain = gain
+					return
+				}
+				if (this.dotAudioCtx) {
+					this.manualLooping = true
+					this.dotAudioCtx.loop = true
+					this.dotAudioCtx.stop()
+					this.dotAudioCtx.seek(0)
+					this.dotAudioCtx.play()
+				}
+			},
+			stopManualTone() {
+				if (this.manualOsc) {
+					try {
+						this.manualOsc.stop()
+					} catch (e) {
+						// ignore
+					}
+					this.manualOsc.disconnect()
+					if (this.manualGain) {
+						this.manualGain.disconnect()
+					}
+					this.manualOsc = null
+					this.manualGain = null
+				}
+				if (this.dotAudioCtx && this.manualLooping) {
+					this.dotAudioCtx.loop = false
+					this.dotAudioCtx.stop()
+					this.manualLooping = false
+				}
+				this.isKeying = false
+			},
+			handleMarkInput(mark, startAt, playAudio) {
+				const unitMs = this.getUnitMs()
+				if (this.cwDecoder) {
+					const flushed = this.cwDecoder.recordMark(mark, startAt, unitMs, this.wpm)
+					this.applyDecodedResult(flushed)
+				}
+				const markUnits = mark === '-' ? 3 : 1
+				const durationMs = unitMs * (markUnits + 1)
+				this.lastInputEndAt = startAt + durationMs
+				this.rescheduleGapTimers(unitMs)
+				if (playAudio) {
+					this.enqueueMark(mark, { playAudio })
+				}
+			},
+			enqueueMark(mark, options = {}) {
 				if (this.inputQueue.length < 40) {
-					this.inputQueue.push(mark)
+					this.inputQueue.push({
+						mark,
+						playAudio: options.playAudio !== false
+					})
 				}
 				this.processQueue()
 			},
@@ -394,6 +517,7 @@
 				this.stopAllAutoRepeat()
 				this.keyDown['.'] = false
 				this.keyDown['-'] = false
+				this.stopManualTone()
 				if (this.recordStopTimer) {
 					clearTimeout(this.recordStopTimer)
 					this.recordStopTimer = null
@@ -409,6 +533,7 @@
 				this.inputQueue = []
 				this.nextAvailableAt = 0
 				this.lastScheduledEndAt = 0
+				this.lastInputEndAt = 0
 				this.isKeying = false
 				if (this.cwDecoder) {
 					this.cwDecoder.reset()
@@ -418,6 +543,7 @@
 			},
 			teardownAudio() {
 				this.clearScheduledTimers()
+				this.stopManualTone()
 				if (this.webAudioCtx) {
 					if (this.webAudioCtx.close) {
 						this.webAudioCtx.close()
@@ -507,18 +633,24 @@
 					return
 				}
 				while (this.inputQueue.length > 0) {
-					const mark = this.inputQueue.shift()
-					this.scheduleMark(mark)
+					const entry = this.inputQueue.shift()
+					if (!entry) {
+						continue
+					}
+					const mark = typeof entry === 'string' ? entry : entry.mark
+					const playAudio = typeof entry === 'string' ? true : entry.playAudio
+					this.scheduleMark(mark, playAudio)
 				}
 			},
-			scheduleMark(mark) {
+			scheduleMark(mark, playAudio = true) {
 				const unitMs = this.getUnitMs()
 				const now = Date.now()
 				let startAt = Math.max(now, this.nextAvailableAt || 0)
 				// If we've been idle for a long gap, treat this as a new recording session.
-				if (this.lastScheduledEndAt && !this.keyDown['.'] && !this.keyDown['-']) {
-					const idleGapMs = startAt - this.lastScheduledEndAt
-					if (idleGapMs >= unitMs * 10) {
+				if (this.lastInputEndAt && !this.keyDown['.'] && !this.keyDown['-']) {
+					const idleGapMs = startAt - this.lastInputEndAt
+					const wordGapMs = this.cwDecoder ? this.cwDecoder.getWordGapMs(unitMs) : unitMs * 10
+					if (idleGapMs >= wordGapMs) {
 						this.stopRecordingAndDecode(unitMs)
 						startAt = now
 					}
@@ -532,19 +664,16 @@
 				this.lastScheduledEndAt = endAt
 				// Make the UI feel immediate on mobile.
 				this.sendCW(mark)
-				// Record the scheduled mark into a synthetic audio buffer.
-				if (this.cwDecoder) {
-					this.cwDecoder.recordMark(mark, startAt, unitMs)
-				}
 				const startDelay = Math.max(0, startAt - now)
-				const startTimer = setTimeout(() => {
-					this.playMarkNow(mark, unitMs, durationMs)
-				}, startDelay)
-				this.scheduledTimers.push(startTimer)
-				this.rescheduleGapTimers(unitMs)
+				if (playAudio) {
+					const startTimer = setTimeout(() => {
+						this.playMarkNow(mark, unitMs, durationMs)
+					}, startDelay)
+					this.scheduledTimers.push(startTimer)
+				}
 			},
 			rescheduleGapTimers(unitMs) {
-				if (!this.lastScheduledEndAt) {
+				if (!this.lastInputEndAt) {
 					return
 				}
 				if (this.recordStopTimer) {
@@ -559,25 +688,27 @@
 				if (this.keyDown['.'] || this.keyDown['-'] || !this.cwDecoder || !this.cwDecoder.isRecording) {
 					return
 				}
-				const scheduledEndAt = this.lastScheduledEndAt
+				const scheduledEndAt = this.lastInputEndAt
 				const now = Date.now()
-				const charGapAt = scheduledEndAt + unitMs * 2
+				const charGapMs = this.cwDecoder.getCharGapMs(unitMs) || unitMs * 3
+				const charGapAt = scheduledEndAt + Math.max(0, charGapMs - unitMs)
 				const charDelay = Math.max(0, charGapAt - now)
 				this.charGapTimer = setTimeout(() => {
-					if (this.lastScheduledEndAt !== scheduledEndAt) {
+					if (this.lastInputEndAt !== scheduledEndAt) {
 						return
 					}
 					if (this.keyDown['.'] || this.keyDown['-']) {
 						return
 					}
-					this.applyDecodedResult(this.cwDecoder.flushChar(false))
+					this.cwDecoder.addSilence(charGapMs, unitMs, this.wpm)
 				}, charDelay)
-				// lastScheduledEndAt already includes the 1-unit intra-character gap,
-				// so waiting another 9 units yields a full 10-unit word gap.
-				const stopAt = scheduledEndAt + unitMs * 9
+				// lastInputEndAt already includes the 1-unit intra-character gap,
+				// so waiting the remaining units yields a full word gap.
+				const wordGapMs = this.cwDecoder.getWordGapMs(unitMs) || unitMs * 10
+				const stopAt = scheduledEndAt + Math.max(0, wordGapMs - unitMs)
 				const stopDelay = Math.max(0, stopAt - now)
 				this.recordStopTimer = setTimeout(() => {
-					if (this.lastScheduledEndAt !== scheduledEndAt) {
+					if (this.lastInputEndAt !== scheduledEndAt) {
 						return
 					}
 					if (this.keyDown['.'] || this.keyDown['-']) {
@@ -628,6 +759,21 @@
 				}
 				this.decoderText = this.decoderQueue.join('')
 			},
+			pushDecoderText(text) {
+				if (!text) {
+					return
+				}
+				for (let i = 0; i < text.length; i += 1) {
+					this.pushDecoderChar(text[i])
+				}
+			},
+			pushDecoderChar(char) {
+				for (let i = 0; i < this.decoderQueue.length - 1; i += 1) {
+					this.decoderQueue[i] = this.decoderQueue[i + 1]
+				}
+				this.decoderQueue[this.decoderQueue.length - 1] = char
+				this.decoderText = this.decoderQueue.join('')
+			},
 			initDecoderQueue() {
 				this.decoderQueue = new Array(20).fill(' ')
 			},
@@ -651,7 +797,7 @@
 				if (!this.cwDecoder) {
 					return
 				}
-				this.applyDecodedResult(this.cwDecoder.stopRecordingAndDecode())
+				this.applyDecodedResult(this.cwDecoder.stopRecordingAndDecode(unitMs, this.wpm))
 			},
 			updateFrequencyFromScroll(scrollLeft) {
 				this.currentFrequency = calcFrequencyFromScroll({
@@ -755,5 +901,16 @@
 		background: radial-gradient(circle at top, #1f1f2b 0%, #121219 45%, #0a0a0f 100%);
 		color: #f2f2f2;
 		font-family: "Menlo", "Consolas", "Courier New", monospace;
+		display: flex;
+		flex-direction: column;
+	}
+
+	.content {
+		flex: 1;
+	}
+
+	.control-bottom {
+		margin-top: auto;
+		padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 16rpx);
 	}
 </style>

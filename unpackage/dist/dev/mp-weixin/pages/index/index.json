@@ -1,8 +1,0 @@
-{
-  "navigationBarTitleText": "uni-app",
-  "usingComponents": {
-    "hero-header": "./components/HeroHeader",
-    "control-card": "./components/ControlCard",
-    "decoder-card": "./components/DecoderCard"
-  }
-}

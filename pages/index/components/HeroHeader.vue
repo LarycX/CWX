@@ -1,6 +1,7 @@
 <template>
 	<view class="hero">
-		<text class="title">CWX Spectrum Lab</text>
+		<text class="title">CWX</text>
+		<text class="subtitle">Designed by BA8AUJ</text>
 	</view>
 </template>
 
