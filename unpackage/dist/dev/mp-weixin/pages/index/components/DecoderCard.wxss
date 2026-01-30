@@ -1,0 +1,32 @@
+
+.decoder-card.data-v-975bf80c {
+		margin-top: 20rpx;
+		padding: 18rpx 22rpx;
+		border-radius: 18rpx;
+		background: linear-gradient(160deg, #1c1c26, #12121a);
+		border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.decoder-row.data-v-975bf80c {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+}
+.decoder-label.data-v-975bf80c {
+		font-size: 24rpx;
+		color: #b7b7c6;
+		text-transform: uppercase;
+		letter-spacing: 1rpx;
+}
+.decoder-text.data-v-975bf80c {
+		font-size: 26rpx;
+		color: #ffb347;
+}
+.decoder-control.data-v-975bf80c {
+		margin-top: 14rpx;
+}
+.decoder-control-label.data-v-975bf80c {
+		display: block;
+		margin-bottom: 8rpx;
+		font-size: 22rpx;
+		color: #9b9bb0;
+}
