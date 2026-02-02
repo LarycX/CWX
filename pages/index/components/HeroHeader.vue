@@ -1,6 +1,6 @@
 <template>
 	<view class="hero">
-		<text class="title">CWX</text>
+		<text class="title">CWOX</text>
 		<text class="subtitle">Designed by BA8AUJ</text>
 	</view>
 </template>

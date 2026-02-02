@@ -1,23 +1,31 @@
 <template>
 	<view class="control-card">
 		<view class="mode-row">
-			<text class="mode-label">Key Mode</text>
+			<text class="mode-label">电键类型</text>
 			<view class="mode-toggle">
 				<view
 					class="mode-btn"
 					:class="keyMode === 'auto' ? 'mode-btn-active' : ''"
 					@tap="$emit('mode-change', 'auto')"
 				>
-					Auto
+					自动键
 				</view>
 				<view
 					class="mode-btn"
 					:class="keyMode === 'manual' ? 'mode-btn-active' : ''"
 					@tap="$emit('mode-change', 'manual')"
 				>
-					Manual
+					手动键
 				</view>
 			</view>
+		</view>
+		<view v-if="keyMode === 'auto'" class="mode-row">
+			<text class="mode-label">交换点划</text>
+			<switch
+				:checked="swapKeys"
+				color="#ffb347"
+				@change="$emit('swap-change', $event)"
+			/>
 		</view>
 		<view class="keypad">
 			<!-- #ifdef MP-WEIXIN -->
@@ -28,25 +36,45 @@
 				@touchend.prevent="$emit('manual-end')"
 				@touchcancel.prevent="$emit('manual-end')"
 			>
-				<text>Key</text>
+				<text>Press</text>
 			</view>
 			<template v-else>
-			<view
-				class="key-btn dot"
-				@touchstart.prevent="$emit('start', '.')"
-				@touchend.prevent="$emit('stop', '.')"
-				@touchcancel.prevent="$emit('stop', '.')"
-			>
-				<text>Dot</text>
-			</view>
-			<view
-				class="key-btn dash"
-				@touchstart.prevent="$emit('start', '-')"
-				@touchend.prevent="$emit('stop', '-')"
-				@touchcancel.prevent="$emit('stop', '-')"
-			>
-				<text>Dash</text>
-			</view>
+				<view
+					v-if="swapKeys"
+					class="key-btn dash"
+					@touchstart.prevent="$emit('start', '-')"
+					@touchend.prevent="$emit('stop', '-')"
+					@touchcancel.prevent="$emit('stop', '-')"
+				>
+					<image class="key-icon" src="/static/dash.svg" mode="aspectFit" />
+				</view>
+				<view
+					v-if="swapKeys"
+					class="key-btn dot"
+					@touchstart.prevent="$emit('start', '.')"
+					@touchend.prevent="$emit('stop', '.')"
+					@touchcancel.prevent="$emit('stop', '.')"
+				>
+					<image class="key-icon" src="/static/dot.svg" mode="aspectFit" />
+				</view>
+				<view
+					v-if="!swapKeys"
+					class="key-btn dot"
+					@touchstart.prevent="$emit('start', '.')"
+					@touchend.prevent="$emit('stop', '.')"
+					@touchcancel.prevent="$emit('stop', '.')"
+				>
+					<image class="key-icon" src="/static/dot.svg" mode="aspectFit" />
+				</view>
+				<view
+					v-if="!swapKeys"
+					class="key-btn dash"
+					@touchstart.prevent="$emit('start', '-')"
+					@touchend.prevent="$emit('stop', '-')"
+					@touchcancel.prevent="$emit('stop', '-')"
+				>
+					<image class="key-icon" src="/static/dash.svg" mode="aspectFit" />
+				</view>
 			</template>
 			<!-- #endif -->
 			<!-- #ifndef MP-WEIXIN -->
@@ -59,14 +87,20 @@
 				@mouseup.prevent="$emit('manual-end')"
 				@mouseleave.prevent="$emit('manual-end')"
 			>
-				<text>Key</text>
+				<text>Press</text>
 			</view>
 			<template v-else>
-				<view class="key-btn dot" @tap="$emit('mark', '.')">
-					<text>Dot</text>
+				<view v-if="swapKeys" class="key-btn dash" @tap="$emit('mark', '-')">
+					<image class="key-icon" src="/static/dash.svg" mode="aspectFit" />
 				</view>
-				<view class="key-btn dash" @tap="$emit('mark', '-')">
-					<text>Dash</text>
+				<view v-if="swapKeys" class="key-btn dot" @tap="$emit('mark', '.')">
+					<image class="key-icon" src="/static/dot.svg" mode="aspectFit" />
+				</view>
+				<view v-if="!swapKeys" class="key-btn dot" @tap="$emit('mark', '.')">
+					<image class="key-icon" src="/static/dot.svg" mode="aspectFit" />
+				</view>
+				<view v-if="!swapKeys" class="key-btn dash" @tap="$emit('mark', '-')">
+					<image class="key-icon" src="/static/dash.svg" mode="aspectFit" />
 				</view>
 			</template>
 			<!-- #endif -->
@@ -79,10 +113,14 @@
 		props: {
 			keyMode: {
 				type: String,
-				default: 'auto'
-			}
-		}
-	}
+				default: "auto",
+			},
+			swapKeys: {
+				type: Boolean,
+				default: false,
+			},
+		},
+	};
 </script>
 
 <style scoped>
@@ -143,9 +181,14 @@
 		justify-content: center;
 		border-radius: 22rpx;
 		text-align: center;
-		font-size: 44rpx;
-		font-weight: 600;
+		font-size: 48rpx;
+		font-weight: 800;
 		color: #111117;
+	}
+
+	.key-icon {
+		width: 58rpx;
+		height: 58rpx;
 	}
 
 	.key-btn.dot {

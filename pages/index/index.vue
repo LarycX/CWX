@@ -9,6 +9,7 @@
 			:decoder-text="decoderText"
 			:wpm="wpm"
 			:tone-freq="toneFreq"
+			:show-wpm="keyMode !== 'manual'"
 			@wpm-change="onWpmChange"
 			@tone-change="onToneChange"
 		/>
@@ -17,7 +18,9 @@
 		<control-card
 			class="control-bottom"
 			:key-mode="keyMode"
+			:swap-keys="swapKeys"
 			@mode-change="onKeyModeChange"
+			@swap-change="onSwapChange"
 			@start="startAutoRepeat"
 			@stop="stopAutoRepeat"
 			@mark="enqueueMark"
@@ -92,6 +95,7 @@
 				recordStopTimer: null,
 				decoderQueueTimer: null,
 				keyMode: 'auto',
+				swapKeys: false,
 				manualDownAt: 0,
 				wpm: 20,
 				toneFreq: 700,
@@ -175,6 +179,8 @@
 				}
 				this.pushDecoderText(data.message)
 			})
+			this.cwDecoder.setGapEstimateEnabled(this.keyMode !== 'manual')
+			this.cwDecoder.setManualGapQuantizeEnabled(this.keyMode === 'manual')
 			this.resetFrequency()
 			this.intervalId = setInterval(this.tickSignals, TICK_MS)
 			this.noiseId = setInterval(this.spawnNoiseSignal, 800)
@@ -338,6 +344,13 @@
 				this.stopAllAutoRepeat()
 				this.manualDownAt = 0
 				this.stopManualTone()
+				if (this.cwDecoder) {
+					this.cwDecoder.setGapEstimateEnabled(this.keyMode !== 'manual')
+					this.cwDecoder.setManualGapQuantizeEnabled(this.keyMode === 'manual')
+				}
+			},
+			onSwapChange(event) {
+				this.swapKeys = !!(event && event.detail && event.detail.value)
 			},
 			onManualStart() {
 				if (this.keyMode !== 'manual') {
@@ -358,14 +371,18 @@
 				this.manualDownAt = 0
 				this.stopManualTone()
 				const fallbackUnit = this.getUnitMs()
-				const unitMs = this.cwDecoder ? this.cwDecoder.getUnitEstimateMs(fallbackUnit) : fallbackUnit
-				const dotDelta = Math.abs(duration - unitMs)
-				const dashDelta = Math.abs(duration - unitMs * 3)
-				const mark = dashDelta < dotDelta ? '-' : '.'
+				let mark = '.'
+				let unitMs = fallbackUnit
 				if (this.cwDecoder) {
-					this.cwDecoder.updateUnitEstimateFromTone(duration, fallbackUnit)
+					const classified = this.cwDecoder.classifyMarkFromTone(duration, fallbackUnit)
+					mark = classified.mark
+					unitMs = classified.unitMs || fallbackUnit
+				} else {
+					const dotDelta = Math.abs(duration - fallbackUnit)
+					const dashDelta = Math.abs(duration - fallbackUnit * 3)
+					mark = dashDelta < dotDelta ? '-' : '.'
 				}
-				this.handleMarkInput(mark, startAt, false)
+				this.handleMarkInput(mark, startAt, false, unitMs, duration)
 			},
 			startManualTone() {
 				this.isKeying = true
@@ -414,15 +431,21 @@
 				}
 				this.isKeying = false
 			},
-			handleMarkInput(mark, startAt, playAudio) {
-				const unitMs = this.getUnitMs()
+			handleMarkInput(mark, startAt, playAudio, unitMsOverride = null, actualToneMs = null) {
+				const unitMs = unitMsOverride || this.getUnitMs()
+				const markUnits = mark === '-' ? 3 : 1
+				const toneMs = actualToneMs || unitMs * markUnits
+				const durationMs = toneMs + unitMs
+				let effectiveStartAt = startAt
+				if (playAudio) {
+					const now = Date.now()
+					effectiveStartAt = Math.max(now, this.nextAvailableAt || 0)
+				}
 				if (this.cwDecoder) {
-					const flushed = this.cwDecoder.recordMark(mark, startAt, unitMs, this.wpm)
+					const flushed = this.cwDecoder.recordMark(mark, effectiveStartAt, unitMs, this.wpm, actualToneMs)
 					this.applyDecodedResult(flushed)
 				}
-				const markUnits = mark === '-' ? 3 : 1
-				const durationMs = unitMs * (markUnits + 1)
-				this.lastInputEndAt = startAt + durationMs
+				this.lastInputEndAt = effectiveStartAt + durationMs
 				this.rescheduleGapTimers(unitMs)
 				if (playAudio) {
 					this.enqueueMark(mark, { playAudio })
@@ -690,7 +713,8 @@
 				}
 				const scheduledEndAt = this.lastInputEndAt
 				const now = Date.now()
-				const charGapMs = this.cwDecoder.getCharGapMs(unitMs) || unitMs * 3
+				const manualExtraCharUnits = this.keyMode === 'manual' ? 2 : 0
+				const charGapMs = (this.cwDecoder.getCharGapMs(unitMs) || unitMs * 3) + unitMs * manualExtraCharUnits
 				const charGapAt = scheduledEndAt + Math.max(0, charGapMs - unitMs)
 				const charDelay = Math.max(0, charGapAt - now)
 				this.charGapTimer = setTimeout(() => {
@@ -704,7 +728,8 @@
 				}, charDelay)
 				// lastInputEndAt already includes the 1-unit intra-character gap,
 				// so waiting the remaining units yields a full word gap.
-				const wordGapMs = this.cwDecoder.getWordGapMs(unitMs) || unitMs * 10
+				const manualExtraWordUnits = this.keyMode === 'manual' ? 8 : 0
+				const wordGapMs = (this.cwDecoder.getWordGapMs(unitMs) || unitMs * 10) + unitMs * manualExtraWordUnits
 				const stopAt = scheduledEndAt + Math.max(0, wordGapMs - unitMs)
 				const stopDelay = Math.max(0, stopAt - now)
 				this.recordStopTimer = setTimeout(() => {

@@ -1,11 +1,11 @@
 <template>
 	<view class="decoder-card">
 		<view class="decoder-row">
-			<text class="decoder-label">Decoder</text>
-			<text class="decoder-text">{{ decoderText || '...' }}</text>
+			<text class="decoder-label">解码器</text>
+			<text class="decoder-text">{{ decoderText || "等待输入" }}</text>
 		</view>
-		<view class="decoder-control">
-			<text class="decoder-control-label">WPM: {{ wpm }}</text>
+		<view v-if="showWpm" class="decoder-control">
+			<text class="decoder-control-label">速度: {{ wpm }} WPM</text>
 			<slider
 				:min="5"
 				:max="30"
@@ -17,7 +17,7 @@
 			/>
 		</view>
 		<view class="decoder-control">
-			<text class="decoder-control-label">Tone: {{ toneFreq }} Hz</text>
+			<text class="decoder-control-label">音高: {{ toneFreq }} Hz</text>
 			<slider
 				:min="400"
 				:max="1000"
@@ -36,18 +36,22 @@
 		props: {
 			decoderText: {
 				type: String,
-				required: true
+				required: true,
+			},
+			showWpm: {
+				type: Boolean,
+				default: true,
 			},
 			wpm: {
 				type: Number,
-				required: true
+				required: true,
 			},
 			toneFreq: {
 				type: Number,
-				required: true
-			}
-		}
-	}
+				required: true,
+			},
+		},
+	};
 </script>
 
 <style scoped>
