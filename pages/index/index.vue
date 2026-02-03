@@ -1,19 +1,18 @@
 <template>
 	<view class="page">
 		<view class="content">
-		<hero-header />
+			<hero-header />
 
-		<!-- spectrum-card removed temporarily -->
+			<!-- spectrum-card removed temporarily -->
 
-		<decoder-card
-			:decoder-text="decoderText"
-			:wpm="wpm"
-			:tone-freq="toneFreq"
-			:show-wpm="keyMode !== 'manual'"
-			@wpm-change="onWpmChange"
-			@tone-change="onToneChange"
-		/>
-
+			<decoder-card
+				:decoder-text="decoderText"
+				:wpm="wpm"
+				:tone-freq="toneFreq"
+				:show-wpm="keyMode !== 'manual'"
+				@wpm-change="onWpmChange"
+				@tone-change="onToneChange"
+			/>
 		</view>
 		<control-card
 			class="control-bottom"
@@ -27,86 +26,131 @@
 			@manual-start="onManualStart"
 			@manual-end="onManualEnd"
 		/>
-
 	</view>
 </template>
 
 <script>
-	import HeroHeader from './components/HeroHeader.vue'
-	import ControlCard from './components/ControlCard.vue'
-	import DecoderCard from './components/DecoderCard.vue'
-	import CwDecoderEngine from './logic/cwDecoder'
+	import HeroHeader from "./components/HeroHeader.vue";
+	import ControlCard from "./components/ControlCard.vue";
+	import DecoderCard from "./components/DecoderCard.vue";
+	import CwDecoderEngine from "./logic/cwDecoder";
 	import {
 		buildBandSegments,
 		buildTicks,
 		computeFrequencyFromScroll as calcFrequencyFromScroll,
-		scrollLeftForFrequency as calcScrollLeftForFrequency
-	} from './logic/spectrum'
-	import { buildMarkSamples, encodeWav } from './logic/audio'
-	import { createSignal, randomBandFrequency } from './logic/signal'
-	import MorseCWWave from 'morse-pro/lib/morse-pro-cw-wave'
+		scrollLeftForFrequency as calcScrollLeftForFrequency,
+	} from "./logic/spectrum";
+	import { buildMarkSamples, encodeWav } from "./logic/audio";
+	import { createSignal, randomBandFrequency } from "./logic/signal";
+	import MorseCWWave from "morse-pro/lib/morse-pro-cw-wave";
 
-	const SIGNAL_DURATION = 1400
-	const TICK_MS = 120
-	const WATERFALL_ROW_MS = 160
-	const WATERFALL_ROWS = 36
-	const BAND_GAP_PX = 160
-	const MIN_WPM = 5
-	const MAX_WPM = 30
-	const SAMPLE_RATE = 8000
+	const SIGNAL_DURATION = 1400;
+	const TICK_MS = 120;
+	const WATERFALL_ROW_MS = 160;
+	const WATERFALL_ROWS = 36;
+	const BAND_GAP_PX = 160;
+	const MIN_WPM = 5;
+	const MAX_WPM = 30;
+	const SAMPLE_RATE = 8000;
+	const MORSE_MAP = {
+		".-": "A",
+		"-...": "B",
+		"-.-.": "C",
+		"-..": "D",
+		".": "E",
+		"..-.": "F",
+		"--.": "G",
+		"....": "H",
+		"..": "I",
+		".---": "J",
+		"-.-": "K",
+		".-..": "L",
+		"--": "M",
+		"-.": "N",
+		"---": "O",
+		".--.": "P",
+		"--.-": "Q",
+		".-.": "R",
+		"...": "S",
+		"-": "T",
+		"..-": "U",
+		"...-": "V",
+		".--": "W",
+		"-..-": "X",
+		"-.--": "Y",
+		"--..": "Z",
+		"-----": "0",
+		".----": "1",
+		"..---": "2",
+		"...--": "3",
+		"....-": "4",
+		".....": "5",
+		"-....": "6",
+		"--...": "7",
+		"---..": "8",
+		"----.": "9",
+	};
 
 	export default {
 		components: {
 			HeroHeader,
 			ControlCard,
-			DecoderCard
+			DecoderCard,
 		},
 		data() {
 			return {
-				bands: [{
-						label: '3 MHz',
+				bands: [
+					{
+						label: "3 MHz",
 						min: 3.01,
-						max: 3.2
+						max: 3.2,
 					},
 					{
-						label: '7 MHz',
+						label: "7 MHz",
 						min: 7.01,
-						max: 7.2
+						max: 7.2,
 					},
 					{
-						label: '10 MHz',
+						label: "10 MHz",
 						min: 10.01,
-						max: 10.2
+						max: 10.2,
 					},
 					{
-						label: '40 MHz',
+						label: "40 MHz",
 						min: 40.01,
-						max: 40.2
-					}
+						max: 40.2,
+					},
 				],
 				currentFrequency: 3.01,
 				rulerScrollLeft: 0,
 				rulerViewportWidth: 0,
 				signals: [],
 				waterfallRows: [],
-				decoderText: '',
+				decoderText: "",
 				decoderQueue: [],
 				cwDecoder: null,
 				recordStopTimer: null,
 				decoderQueueTimer: null,
-				keyMode: 'auto',
+				keyMode: "auto",
 				swapKeys: false,
 				manualDownAt: 0,
+				manualT: 100,
+				manualAlpha: 0.15,
+				manualCurrent: "",
+				manualLastUpTime: null,
+				manualLastDownTime: null,
+				manualCharTimer: null,
+				manualWordTimer: null,
 				wpm: 20,
 				toneFreq: 700,
 				inputQueue: [],
 				repeatTimers: {
-					'.': null,
-					'-': null
+					".": null,
+					"-": null,
 				},
 				keyDown: {
-					'.': false,
-					'-': false
+					".": false,
+					"-": false,
 				},
 				isKeying: false,
 				nextAvailableAt: 0,
@@ -124,705 +168,876 @@
 				dotAudioCtx: null,
 				dashAudioCtx: null,
 				audioReady: false,
-				dotPath: '',
-				dashPath: '',
+				dotPath: "",
+				dashPath: "",
 				keyListenerBound: false,
 				intervalId: null,
 				noiseId: null,
 				waterfallId: null,
-				charGapTimer: null
-			}
+				charGapTimer: null,
+			};
 		},
 		computed: {
 			currentBand() {
-				const direct = this.bands.find((band) => this.currentFrequency >= band.min && this.currentFrequency <= band
-					.max)
+				const direct = this.bands.find(
+					(band) =>
+						this.currentFrequency >= band.min &&
+						this.currentFrequency <= band.max,
+				);
 				if (direct) {
-					return direct
+					return direct;
 				}
-				return this.bands[0]
+				return this.bands[0];
 			},
 			bandSegments() {
-				return buildBandSegments(this.bands, this.pxPerMHz, BAND_GAP_PX)
+				return buildBandSegments(this.bands, this.pxPerMHz, BAND_GAP_PX);
 			},
 			totalBandWidth() {
 				if (this.bandSegments.length === 0) {
-					return 0
+					return 0;
 				}
-				return this.bandSegments[this.bandSegments.length - 1].endX
+				return this.bandSegments[this.bandSegments.length - 1].endX;
 			},
 			pxPerMHz() {
-				return 20000
+				return 20000;
 			},
 			rulerContentWidth() {
-				return Math.round(this.totalBandWidth)
+				return Math.round(this.totalBandWidth);
 			},
 			rulerSpacer() {
-				return Math.round(this.rulerViewportWidth / 2)
+				return Math.round(this.rulerViewportWidth / 2);
 			},
 			rulerContentStyle() {
-				return `width:${this.rulerContentWidth + this.rulerSpacer * 2}px;height:200rpx;`
+				return `width:${this.rulerContentWidth + this.rulerSpacer * 2}px;height:200rpx;`;
 			},
 			signalsInBand() {
-				const band = this.currentBand
-				return this.signals.filter((signal) => signal.freq >= band.min && signal.freq <= band.max)
+				const band = this.currentBand;
+				return this.signals.filter(
+					(signal) => signal.freq >= band.min && signal.freq <= band.max,
+				);
 			},
 			ticks() {
-				return buildTicks(this.bandSegments, this.rulerSpacer, this.pxPerMHz)
-			}
+				return buildTicks(this.bandSegments, this.rulerSpacer, this.pxPerMHz);
+			},
 		},
 		onLoad() {
-			this.cwDecoder = new CwDecoderEngine()
+			this.cwDecoder = new CwDecoderEngine();
 			this.cwDecoder.setMessageCallback((data) => {
-				if (!data || typeof data.message !== 'string') {
-					return
+				if (this.keyMode === "manual") {
+					return;
 				}
-				this.pushDecoderText(data.message)
-			})
-			this.cwDecoder.setGapEstimateEnabled(this.keyMode !== 'manual')
-			this.cwDecoder.setManualGapQuantizeEnabled(this.keyMode === 'manual')
-			this.resetFrequency()
-			this.intervalId = setInterval(this.tickSignals, TICK_MS)
-			this.noiseId = setInterval(this.spawnNoiseSignal, 800)
-			this.waterfallId = setInterval(this.addWaterfallRow, WATERFALL_ROW_MS)
-			this.decoderQueueTimer = setInterval(this.shiftDecoderQueue, 5000)
-			this.setupAudio()
-			this.bindKeyboard()
+				if (!data || typeof data.message !== "string") {
+					return;
+				}
+				this.pushDecoderText(data.message);
+			});
+			this.cwDecoder.setGapEstimateEnabled(this.keyMode !== "manual");
+			this.cwDecoder.setManualGapQuantizeEnabled(this.keyMode === "manual");
+			this.resetFrequency();
+			this.intervalId = setInterval(this.tickSignals, TICK_MS);
+			this.noiseId = setInterval(this.spawnNoiseSignal, 800);
+			this.waterfallId = setInterval(this.addWaterfallRow, WATERFALL_ROW_MS);
+			this.decoderQueueTimer = setInterval(this.shiftDecoderQueue, 5000);
+			this.setupAudio();
+			this.bindKeyboard();
 		},
 		onReady() {
-			this.measureRuler()
+			this.measureRuler();
 		},
 		onUnload() {
 			if (this.intervalId) {
-				clearInterval(this.intervalId)
+				clearInterval(this.intervalId);
 			}
 			if (this.noiseId) {
-				clearInterval(this.noiseId)
+				clearInterval(this.noiseId);
 			}
 			if (this.waterfallId) {
-				clearInterval(this.waterfallId)
+				clearInterval(this.waterfallId);
 			}
 			if (this.decoderQueueTimer) {
-				clearInterval(this.decoderQueueTimer)
+				clearInterval(this.decoderQueueTimer);
 			}
-			this.teardownAudio()
-			this.unbindKeyboard()
+			this.teardownAudio();
+			this.unbindKeyboard();
 		},
 		methods: {
 			getUnitMs() {
-				return Math.max(40, Math.round(1200 / this.wpm))
+				if (this.keyMode === "manual") {
+					return this.manualT || 100;
+				}
+				return Math.max(40, Math.round(1200 / this.wpm));
+			},
+			resetManualState() {
+				this.manualT = 100;
+				this.manualCurrent = "";
+				this.manualLastUpTime = null;
+				this.manualLastDownTime = null;
+				this.clearManualGapTimers();
+			},
+			clearManualGapTimers() {
+				if (this.manualCharTimer) {
+					clearTimeout(this.manualCharTimer);
+					this.manualCharTimer = null;
+				}
+				if (this.manualWordTimer) {
+					clearTimeout(this.manualWordTimer);
+					this.manualWordTimer = null;
+				}
+			},
+			handleManualMark(markMs, options = {}) {
+				if (markMs < 20) {
+					return;
+				}
+				const t = options.baseT || this.manualT || 100;
+				const symbol = markMs < t * 2 ? "." : "-";
+				this.manualCurrent += symbol;
+				if (options.adaptive !== false) {
+					const candidate = symbol === "." ? markMs : markMs / 3;
+					const alpha = this.manualAlpha;
+					this.manualT = t * (1 - alpha) + candidate * alpha;
+				}
+			},
+			handleManualSpace(spaceMs, options = {}) {
+				if (spaceMs < 20) {
+					return;
+				}
+				const t = options.baseT || this.manualT || 100;
+				if (spaceMs < t * 2) {
+					return;
+				}
+				this.flushManualLetter();
+				if (spaceMs >= t * 5) {
+					this.pushDecoderChar(" ");
+				}
+			},
+			flushManualLetter() {
+				if (!this.manualCurrent) {
+					return;
+				}
+				const ch = MORSE_MAP[this.manualCurrent] || "?";
+				this.pushDecoderChar(ch);
+				this.manualCurrent = "";
+			},
+			scheduleManualGapFlush(referenceUpTime, options = {}) {
+				this.clearManualGapTimers();
+				const t = options.baseT || this.manualT || 100;
+				const charDelay = Math.max(0, Math.round(t * 2));
+				const wordDelay = Math.max(0, Math.round(t * 5));
+				this.manualCharTimer = setTimeout(() => {
+					if (this.manualLastUpTime !== referenceUpTime) {
+						return;
+					}
+					if (
+						this.keyMode === "auto" &&
+						(this.keyDown["."] || this.keyDown["-"])
+					) {
+						return;
+					}
+					this.flushManualLetter();
+				}, charDelay);
+				this.manualWordTimer = setTimeout(() => {
+					if (this.manualLastUpTime !== referenceUpTime) {
+						return;
+					}
+					if (
+						this.keyMode === "auto" &&
+						(this.keyDown["."] || this.keyDown["-"])
+					) {
+						return;
+					}
+					this.flushManualLetter();
+					this.pushDecoderChar(" ");
+				}, wordDelay);
 			},
 			resetFrequency() {
-				this.currentFrequency = this.bands[0].min
-				this.decoderText = ''
-				this.initDecoderQueue()
-				this.rulerScrollLeft = 0
-				this.waterfallRows = []
+				this.currentFrequency = this.bands[0].min;
+				this.decoderText = "";
+				this.initDecoderQueue();
+				this.rulerScrollLeft = 0;
+				this.waterfallRows = [];
+				this.resetManualState();
 				if (this.cwDecoder) {
-					this.cwDecoder.reset()
+					this.cwDecoder.reset();
 				}
 			},
 			onRulerScroll(event) {
-				const scrollLeft = event.detail.scrollLeft || 0
-				this.rulerScrollLeft = scrollLeft
-				this.updateFrequencyFromScroll(scrollLeft)
+				const scrollLeft = event.detail.scrollLeft || 0;
+				this.rulerScrollLeft = scrollLeft;
+				this.updateFrequencyFromScroll(scrollLeft);
 			},
 			onWaterfallScroll(event) {
-				this.onRulerScroll(event)
+				this.onRulerScroll(event);
 			},
 			measureRuler() {
-				const query = uni.createSelectorQuery().in(this)
-				query.select('.ruler-scroll').boundingClientRect((rect) => {
-					if (!rect) {
-						return
-					}
-					this.rulerViewportWidth = rect.width || 0
-					this.rulerScrollLeft = this.scrollLeftForFrequency(this.currentFrequency)
-				}).exec()
+				const query = uni.createSelectorQuery().in(this);
+				query
+					.select(".ruler-scroll")
+					.boundingClientRect((rect) => {
+						if (!rect) {
+							return;
+						}
+						this.rulerViewportWidth = rect.width || 0;
+						this.rulerScrollLeft = this.scrollLeftForFrequency(
+							this.currentFrequency,
+						);
+					})
+					.exec();
 			},
 			bindKeyboard() {
-				if (this.keyListenerBound || typeof document === 'undefined') {
-					return
+				if (this.keyListenerBound || typeof document === "undefined") {
+					return;
 				}
-				this.keyListenerBound = true
-				document.addEventListener('keydown', this.onKeydown)
-				document.addEventListener('keyup', this.onKeyup)
-				window.addEventListener('blur', this.onKeyup)
+				this.keyListenerBound = true;
+				document.addEventListener("keydown", this.onKeydown);
+				document.addEventListener("keyup", this.onKeyup);
+				window.addEventListener("blur", this.onKeyup);
 			},
 			unbindKeyboard() {
-				if (!this.keyListenerBound || typeof document === 'undefined') {
-					return
+				if (!this.keyListenerBound || typeof document === "undefined") {
+					return;
 				}
-				document.removeEventListener('keydown', this.onKeydown)
-				document.removeEventListener('keyup', this.onKeyup)
-				window.removeEventListener('blur', this.onKeyup)
-				this.keyListenerBound = false
+				document.removeEventListener("keydown", this.onKeydown);
+				document.removeEventListener("keyup", this.onKeyup);
+				window.removeEventListener("blur", this.onKeyup);
+				this.keyListenerBound = false;
 			},
 			onKeydown(event) {
 				if (!event || !event.key) {
-					return
+					return;
 				}
-				if (event.key !== '.' && event.key !== '-') {
-					return
+				if (event.key !== "." && event.key !== "-") {
+					return;
 				}
 				if (event.repeat) {
-					event.preventDefault()
-					return
+					event.preventDefault();
+					return;
 				}
-				this.startAutoRepeat(event.key)
-				event.preventDefault()
+				this.startAutoRepeat(event.key);
+				event.preventDefault();
 			},
 			onKeyup(event) {
 				if (!event || !event.key) {
-					this.stopAllAutoRepeat()
-					return
+					this.stopAllAutoRepeat();
+					return;
 				}
-				if (event.key === '.' || event.key === '-') {
-					this.stopAutoRepeat(event.key)
-					event.preventDefault()
+				if (event.key === "." || event.key === "-") {
+					this.stopAutoRepeat(event.key);
+					event.preventDefault();
 				}
 			},
 			startAutoRepeat(mark) {
-				if (mark !== '.' && mark !== '-') {
-					return
+				if (mark !== "." && mark !== "-") {
+					return;
 				}
-				if (this.keyMode !== 'auto') {
-					return
+				if (this.keyMode !== "auto") {
+					return;
 				}
-				if (this.repeatTimers[mark]) {
-					return
+				if (this.keyDown[mark]) {
+					return;
 				}
-				this.keyDown[mark] = true
+				this.keyDown[mark] = true;
 				// Fire immediately, then schedule subsequent repeats off the timeline tail.
-				this.handleMarkInput(mark, Date.now(), true)
-				this.scheduleRepeatTick(mark)
+				this.handleMarkInput(mark, Date.now(), true);
+				this.scheduleRepeatTick(mark);
 			},
 			scheduleRepeatTick(mark) {
-				if (mark !== '.' && mark !== '-') {
-					return
+				if (mark !== "." && mark !== "-") {
+					return;
 				}
 				if (!this.keyDown[mark]) {
-					return
+					return;
 				}
-				const now = Date.now()
+				const now = Date.now();
 				// Align the next enqueue with the scheduler's timeline tail.
-				const nextAt = Math.max(now, this.nextAvailableAt || 0)
-				const delayMs = Math.max(16, nextAt - now)
+				const nextAt = Math.max(now, this.nextAvailableAt || 0);
+				const delayMs = Math.max(16, nextAt - now);
 				const timerId = setTimeout(() => {
-					this.repeatTimers[mark] = null
+					this.repeatTimers[mark] = null;
 					if (!this.keyDown[mark]) {
-						return
+						return;
 					}
-					this.handleMarkInput(mark, Date.now(), true)
-					this.scheduleRepeatTick(mark)
-				}, delayMs)
-				this.repeatTimers[mark] = timerId
+					this.handleMarkInput(mark, Date.now(), true);
+					this.scheduleRepeatTick(mark);
+				}, delayMs);
+				this.repeatTimers[mark] = timerId;
 			},
 			stopAutoRepeat(mark) {
-				if (mark !== '.' && mark !== '-') {
-					return
+				if (mark !== "." && mark !== "-") {
+					return;
 				}
-				if (this.keyMode !== 'auto') {
-					return
+				if (this.keyMode !== "auto") {
+					return;
 				}
-				this.keyDown[mark] = false
-				const timerId = this.repeatTimers[mark]
+				this.keyDown[mark] = false;
+				const timerId = this.repeatTimers[mark];
 				if (timerId) {
-					clearTimeout(timerId)
+					clearTimeout(timerId);
 				}
-				this.repeatTimers[mark] = null
+				this.repeatTimers[mark] = null;
+				if (this.manualLastUpTime) {
+					this.scheduleManualGapFlush(this.manualLastUpTime, {
+						baseT: this.getUnitMs(),
+					});
+				}
 				// When the user releases the key, re-arm gap timers based on the
 				// current schedule tail.
-				this.rescheduleGapTimers(this.getUnitMs())
+				this.rescheduleGapTimers(this.getUnitMs());
 			},
 			stopAllAutoRepeat() {
-				this.stopAutoRepeat('.')
-				this.stopAutoRepeat('-')
+				this.stopAutoRepeat(".");
+				this.stopAutoRepeat("-");
 			},
 			onKeyModeChange(mode) {
-				this.keyMode = mode === 'manual' ? 'manual' : 'auto'
-				this.stopAllAutoRepeat()
-				this.manualDownAt = 0
-				this.stopManualTone()
+				this.keyMode = mode === "manual" ? "manual" : "auto";
+				this.stopAllAutoRepeat();
+				this.manualDownAt = 0;
+				this.resetManualState();
+				this.stopManualTone();
 				if (this.cwDecoder) {
-					this.cwDecoder.setGapEstimateEnabled(this.keyMode !== 'manual')
-					this.cwDecoder.setManualGapQuantizeEnabled(this.keyMode === 'manual')
+					this.cwDecoder.setGapEstimateEnabled(this.keyMode !== "manual");
+					this.cwDecoder.setManualGapQuantizeEnabled(this.keyMode === "manual");
 				}
 			},
 			onSwapChange(event) {
-				this.swapKeys = !!(event && event.detail && event.detail.value)
+				this.swapKeys = !!(event && event.detail && event.detail.value);
 			},
 			onManualStart() {
-				if (this.keyMode !== 'manual') {
-					return
+				if (this.keyMode !== "manual") {
+					return;
 				}
-				this.manualDownAt = Date.now()
-				this.startManualTone()
+				const now = Date.now();
+				if (this.manualLastUpTime != null) {
+					const space = now - this.manualLastUpTime;
+					this.handleManualSpace(space);
+				}
+				this.clearManualGapTimers();
+				this.manualLastDownTime = now;
+				this.manualDownAt = now;
+				this.startManualTone();
 			},
 			onManualEnd() {
-				if (this.keyMode !== 'manual') {
-					return
+				if (this.keyMode !== "manual") {
+					return;
 				}
-				if (!this.manualDownAt) {
-					return
+				if (!this.manualDownAt || this.manualLastDownTime == null) {
+					return;
 				}
-				const duration = Date.now() - this.manualDownAt
-				const startAt = this.manualDownAt
-				this.manualDownAt = 0
-				this.stopManualTone()
-				const fallbackUnit = this.getUnitMs()
-				let mark = '.'
-				let unitMs = fallbackUnit
-				if (this.cwDecoder) {
-					const classified = this.cwDecoder.classifyMarkFromTone(duration, fallbackUnit)
-					mark = classified.mark
-					unitMs = classified.unitMs || fallbackUnit
-				} else {
-					const dotDelta = Math.abs(duration - fallbackUnit)
-					const dashDelta = Math.abs(duration - fallbackUnit * 3)
-					mark = dashDelta < dotDelta ? '-' : '.'
-				}
-				this.handleMarkInput(mark, startAt, false, unitMs, duration)
+				const now = Date.now();
+				const duration = now - this.manualDownAt;
+				this.manualDownAt = 0;
+				this.manualLastDownTime = null;
+				this.stopManualTone();
+				this.handleManualMark(duration);
+				this.manualLastUpTime = now;
+				this.scheduleManualGapFlush(now);
 			},
 			startManualTone() {
-				this.isKeying = true
+				this.isKeying = true;
 				if (this.useWebAudio && this.webAudioCtx) {
-					const osc = this.webAudioCtx.createOscillator()
-					const gain = this.webAudioCtx.createGain()
-					osc.type = 'sine'
-					osc.frequency.value = this.toneFreq
-					gain.gain.value = 0.6
-					osc.connect(gain)
-					gain.connect(this.webAudioCtx.destination)
+					const osc = this.webAudioCtx.createOscillator();
+					const gain = this.webAudioCtx.createGain();
+					osc.type = "sine";
+					osc.frequency.value = this.toneFreq;
+					gain.gain.value = 0.6;
+					osc.connect(gain);
+					gain.connect(this.webAudioCtx.destination);
 					if (this.webAudioCtx.resume) {
-						this.webAudioCtx.resume()
+						this.webAudioCtx.resume();
 					}
-					osc.start(0)
-					this.manualOsc = osc
-					this.manualGain = gain
-					return
+					osc.start(0);
+					this.manualOsc = osc;
+					this.manualGain = gain;
+					return;
 				}
 				if (this.dotAudioCtx) {
-					this.manualLooping = true
-					this.dotAudioCtx.loop = true
-					this.dotAudioCtx.stop()
-					this.dotAudioCtx.seek(0)
-					this.dotAudioCtx.play()
+					this.manualLooping = true;
+					this.dotAudioCtx.loop = true;
+					this.dotAudioCtx.stop();
+					this.dotAudioCtx.seek(0);
+					this.dotAudioCtx.play();
 				}
 			},
 			stopManualTone() {
 				if (this.manualOsc) {
 					try {
-						this.manualOsc.stop()
+						this.manualOsc.stop();
 					} catch (e) {
 						// ignore
 					}
-					this.manualOsc.disconnect()
+					this.manualOsc.disconnect();
 					if (this.manualGain) {
-						this.manualGain.disconnect()
+						this.manualGain.disconnect();
 					}
-					this.manualOsc = null
-					this.manualGain = null
+					this.manualOsc = null;
+					this.manualGain = null;
 				}
 				if (this.dotAudioCtx && this.manualLooping) {
-					this.dotAudioCtx.loop = false
-					this.dotAudioCtx.stop()
-					this.manualLooping = false
+					this.dotAudioCtx.loop = false;
+					this.dotAudioCtx.stop();
+					this.manualLooping = false;
 				}
-				this.isKeying = false
+				this.isKeying = false;
 			},
-			handleMarkInput(mark, startAt, playAudio, unitMsOverride = null, actualToneMs = null) {
-				const unitMs = unitMsOverride || this.getUnitMs()
-				const markUnits = mark === '-' ? 3 : 1
-				const toneMs = actualToneMs || unitMs * markUnits
-				const durationMs = toneMs + unitMs
-				let effectiveStartAt = startAt
+			handleMarkInput(
+				mark,
+				startAt,
+				playAudio,
+				unitMsOverride = null,
+				actualToneMs = null,
+			) {
+				const unitMs = unitMsOverride || this.getUnitMs();
+				const markUnits = mark === "-" ? 3 : 1;
+				const toneMs = actualToneMs || unitMs * markUnits;
+				const durationMs = toneMs + unitMs;
+				let effectiveStartAt = startAt;
 				if (playAudio) {
-					const now = Date.now()
-					effectiveStartAt = Math.max(now, this.nextAvailableAt || 0)
+					const now = Date.now();
+					effectiveStartAt = Math.max(now, this.nextAvailableAt || 0);
 				}
-				if (this.cwDecoder) {
-					const flushed = this.cwDecoder.recordMark(mark, effectiveStartAt, unitMs, this.wpm, actualToneMs)
-					this.applyDecodedResult(flushed)
+				if (this.keyMode === "auto") {
+					const baseT = unitMs;
+					this.clearManualGapTimers();
+					if (this.manualLastUpTime != null) {
+						const space = effectiveStartAt - this.manualLastUpTime;
+						this.handleManualSpace(space, { baseT });
+					}
+					this.handleManualMark(toneMs, { baseT, adaptive: false });
+					this.manualLastUpTime = effectiveStartAt + toneMs;
+					this.scheduleManualGapFlush(this.manualLastUpTime, { baseT });
+				} else if (this.cwDecoder) {
+					const flushed = this.cwDecoder.recordMark(
+						mark,
+						effectiveStartAt,
+						unitMs,
+						this.wpm,
+						actualToneMs,
+					);
+					this.applyDecodedResult(flushed);
 				}
-				this.lastInputEndAt = effectiveStartAt + durationMs
-				this.rescheduleGapTimers(unitMs)
+				this.lastInputEndAt = effectiveStartAt + durationMs;
+				this.rescheduleGapTimers(unitMs);
 				if (playAudio) {
-					this.enqueueMark(mark, { playAudio })
+					this.enqueueMark(mark, { playAudio });
 				}
 			},
 			enqueueMark(mark, options = {}) {
 				if (this.inputQueue.length < 40) {
 					this.inputQueue.push({
 						mark,
-						playAudio: options.playAudio !== false
-					})
+						playAudio: options.playAudio !== false,
+					});
 				}
-				this.processQueue()
+				this.processQueue();
 			},
 			onWpmChange(event) {
-				const value = event.detail.value
-				this.wpm = Math.min(MAX_WPM, Math.max(MIN_WPM, Number(value)))
-				this.clearScheduledTimers()
+				const value = event.detail.value;
+				this.wpm = Math.min(MAX_WPM, Math.max(MIN_WPM, Number(value)));
+				this.clearScheduledTimers();
 				if (!this.useWebAudio) {
 					this.morseWave = new MorseCWWave({
 						wpm: this.wpm,
 						frequency: this.toneFreq,
-						sampleRate: SAMPLE_RATE
-					})
+						sampleRate: SAMPLE_RATE,
+					});
 				}
 				// Rebuild tone files so duration matches the new WPM.
-				this.audioReady = false
-				this.dotPath = ''
-				this.dashPath = ''
+				this.audioReady = false;
+				this.dotPath = "";
+				this.dashPath = "";
 				if (this.dotAudioCtx) {
-					this.dotAudioCtx.stop()
+					this.dotAudioCtx.stop();
 				}
 				if (this.dashAudioCtx) {
-					this.dashAudioCtx.stop()
+					this.dashAudioCtx.stop();
 				}
-				this.prepareToneFiles()
+				this.prepareToneFiles();
 			},
 			onToneChange(event) {
-				const value = Number(event.detail.value)
-				this.toneFreq = Math.max(300, Math.min(1200, value))
-				this.clearScheduledTimers()
+				const value = Number(event.detail.value);
+				this.toneFreq = Math.max(300, Math.min(1200, value));
+				this.clearScheduledTimers();
 				if (!this.useWebAudio) {
 					this.morseWave = new MorseCWWave({
 						wpm: this.wpm,
 						frequency: this.toneFreq,
-						sampleRate: SAMPLE_RATE
-					})
+						sampleRate: SAMPLE_RATE,
+					});
 				}
 				// Rebuild tone files so pitch matches the new tone frequency.
-				this.audioReady = false
-				this.dotPath = ''
-				this.dashPath = ''
+				this.audioReady = false;
+				this.dotPath = "";
+				this.dashPath = "";
 				if (this.dotAudioCtx) {
-					this.dotAudioCtx.stop()
+					this.dotAudioCtx.stop();
 				}
 				if (this.dashAudioCtx) {
-					this.dashAudioCtx.stop()
+					this.dashAudioCtx.stop();
 				}
-				this.prepareToneFiles()
+				this.prepareToneFiles();
 			},
 			setupAudio() {
-				if (this.dotAudioCtx || this.dashAudioCtx || this.webAudioCtx || typeof uni === 'undefined') {
-					return
+				if (
+					this.dotAudioCtx ||
+					this.dashAudioCtx ||
+					this.webAudioCtx ||
+					typeof uni === "undefined"
+				) {
+					return;
 				}
-				if (typeof wx !== 'undefined' && wx.createWebAudioContext) {
-					this.useWebAudio = true
-					this.webAudioCtx = wx.createWebAudioContext()
-					this.prepareToneFiles()
-					return
+				if (typeof wx !== "undefined" && wx.createWebAudioContext) {
+					this.useWebAudio = true;
+					this.webAudioCtx = wx.createWebAudioContext();
+					this.prepareToneFiles();
+					return;
 				}
 				if (uni.createInnerAudioContext) {
 					this.morseWave = new MorseCWWave({
 						wpm: this.wpm,
 						frequency: this.toneFreq,
-						sampleRate: SAMPLE_RATE
-					})
-					this.dotAudioCtx = uni.createInnerAudioContext()
-					this.dashAudioCtx = uni.createInnerAudioContext()
-					this.dotAudioCtx.obeyMuteSwitch = false
-					this.dashAudioCtx.obeyMuteSwitch = false
+						sampleRate: SAMPLE_RATE,
+					});
+					this.dotAudioCtx = uni.createInnerAudioContext();
+					this.dashAudioCtx = uni.createInnerAudioContext();
+					this.dotAudioCtx.obeyMuteSwitch = false;
+					this.dashAudioCtx.obeyMuteSwitch = false;
 					const releaseKey = () => {
-						this.isKeying = false
-					}
-					this.dotAudioCtx.onEnded(releaseKey)
-					this.dashAudioCtx.onEnded(releaseKey)
-					this.dotAudioCtx.onError(releaseKey)
-					this.dashAudioCtx.onError(releaseKey)
-					this.prepareToneFiles()
+						this.isKeying = false;
+					};
+					this.dotAudioCtx.onEnded(releaseKey);
+					this.dashAudioCtx.onEnded(releaseKey);
+					this.dotAudioCtx.onError(releaseKey);
+					this.dashAudioCtx.onError(releaseKey);
+					this.prepareToneFiles();
 				}
 			},
 			clearScheduledTimers() {
-				this.stopAllAutoRepeat()
-				this.keyDown['.'] = false
-				this.keyDown['-'] = false
-				this.stopManualTone()
+				this.stopAllAutoRepeat();
+				this.keyDown["."] = false;
+				this.keyDown["-"] = false;
+				this.stopManualTone();
+				this.resetManualState();
 				if (this.recordStopTimer) {
-					clearTimeout(this.recordStopTimer)
-					this.recordStopTimer = null
+					clearTimeout(this.recordStopTimer);
+					this.recordStopTimer = null;
 				}
 				if (this.charGapTimer) {
-					clearTimeout(this.charGapTimer)
-					this.charGapTimer = null
+					clearTimeout(this.charGapTimer);
+					this.charGapTimer = null;
 				}
 				for (let i = 0; i < this.scheduledTimers.length; i += 1) {
-					clearTimeout(this.scheduledTimers[i])
+					clearTimeout(this.scheduledTimers[i]);
 				}
-				this.scheduledTimers = []
-				this.inputQueue = []
-				this.nextAvailableAt = 0
-				this.lastScheduledEndAt = 0
-				this.lastInputEndAt = 0
-				this.isKeying = false
+				this.scheduledTimers = [];
+				this.inputQueue = [];
+				this.nextAvailableAt = 0;
+				this.lastScheduledEndAt = 0;
+				this.lastInputEndAt = 0;
+				this.isKeying = false;
 				if (this.cwDecoder) {
-					this.cwDecoder.reset()
+					this.cwDecoder.reset();
 				}
-				this.initDecoderQueue()
-				this.decoderText = ''
+				this.initDecoderQueue();
+				this.decoderText = "";
 			},
 			teardownAudio() {
-				this.clearScheduledTimers()
-				this.stopManualTone()
+				this.clearScheduledTimers();
+				this.stopManualTone();
 				if (this.webAudioCtx) {
 					if (this.webAudioCtx.close) {
-						this.webAudioCtx.close()
+						this.webAudioCtx.close();
 					}
-					this.webAudioCtx = null
+					this.webAudioCtx = null;
 				}
-				this.dotBuffer = null
-				this.dashBuffer = null
-				this.useWebAudio = false
+				this.dotBuffer = null;
+				this.dashBuffer = null;
+				this.useWebAudio = false;
 				if (this.dotAudioCtx) {
-					this.dotAudioCtx.stop()
-					this.dotAudioCtx.destroy()
-					this.dotAudioCtx = null
+					this.dotAudioCtx.stop();
+					this.dotAudioCtx.destroy();
+					this.dotAudioCtx = null;
 				}
 				if (this.dashAudioCtx) {
-					this.dashAudioCtx.stop()
-					this.dashAudioCtx.destroy()
-					this.dashAudioCtx = null
+					this.dashAudioCtx.stop();
+					this.dashAudioCtx.destroy();
+					this.dashAudioCtx = null;
 				}
-				this.morseWave = null
-				this.audioReady = false
-				this.dotPath = ''
-				this.dashPath = ''
+				this.morseWave = null;
+				this.audioReady = false;
+				this.dotPath = "";
+				this.dashPath = "";
 			},
 			prepareToneFiles() {
 				if (this.useWebAudio && this.webAudioCtx) {
-					const unitMs = this.getUnitMs()
-					const dotSamples = buildMarkSamples('.', unitMs, SAMPLE_RATE, this.toneFreq)
-					const dashSamples = buildMarkSamples('-', unitMs, SAMPLE_RATE, this.toneFreq)
-					const dotBuffer = this.webAudioCtx.createBuffer(1, dotSamples.length, SAMPLE_RATE)
-					const dashBuffer = this.webAudioCtx.createBuffer(1, dashSamples.length, SAMPLE_RATE)
-					dotBuffer.getChannelData(0).set(new Float32Array(dotSamples))
-					dashBuffer.getChannelData(0).set(new Float32Array(dashSamples))
-					this.dotBuffer = dotBuffer
-					this.dashBuffer = dashBuffer
-					this.audioReady = true
-					return
+					const unitMs = this.getUnitMs();
+					const dotSamples = buildMarkSamples(
+						".",
+						unitMs,
+						SAMPLE_RATE,
+						this.toneFreq,
+					);
+					const dashSamples = buildMarkSamples(
+						"-",
+						unitMs,
+						SAMPLE_RATE,
+						this.toneFreq,
+					);
+					const dotBuffer = this.webAudioCtx.createBuffer(
+						1,
+						dotSamples.length,
+						SAMPLE_RATE,
+					);
+					const dashBuffer = this.webAudioCtx.createBuffer(
+						1,
+						dashSamples.length,
+						SAMPLE_RATE,
+					);
+					dotBuffer.getChannelData(0).set(new Float32Array(dotSamples));
+					dashBuffer.getChannelData(0).set(new Float32Array(dashSamples));
+					this.dotBuffer = dotBuffer;
+					this.dashBuffer = dashBuffer;
+					this.audioReady = true;
+					return;
 				}
-				if (typeof wx === 'undefined' || !wx.getFileSystemManager || !wx.env || !wx.env.USER_DATA_PATH) {
-					this.audioReady = false
-					return
+				if (
+					typeof wx === "undefined" ||
+					!wx.getFileSystemManager ||
+					!wx.env ||
+					!wx.env.USER_DATA_PATH
+				) {
+					this.audioReady = false;
+					return;
 				}
-				const fs = wx.getFileSystemManager()
-				const unitMs = this.getUnitMs()
-				const dotSamples = buildMarkSamples('.', unitMs, SAMPLE_RATE, this.toneFreq)
-				const dashSamples = buildMarkSamples('-', unitMs, SAMPLE_RATE, this.toneFreq)
-				const dotPath = `${wx.env.USER_DATA_PATH}/cw_dot_${this.wpm}_${this.toneFreq}.wav`
-				const dashPath = `${wx.env.USER_DATA_PATH}/cw_dash_${this.wpm}_${this.toneFreq}.wav`
+				const fs = wx.getFileSystemManager();
+				const unitMs = this.getUnitMs();
+				const dotSamples = buildMarkSamples(
+					".",
+					unitMs,
+					SAMPLE_RATE,
+					this.toneFreq,
+				);
+				const dashSamples = buildMarkSamples(
+					"-",
+					unitMs,
+					SAMPLE_RATE,
+					this.toneFreq,
+				);
+				const dotPath = `${wx.env.USER_DATA_PATH}/cw_dot_${this.wpm}_${this.toneFreq}.wav`;
+				const dashPath = `${wx.env.USER_DATA_PATH}/cw_dash_${this.wpm}_${this.toneFreq}.wav`;
 				const writeWav = (path, samples, done) => {
 					fs.writeFile({
 						filePath: path,
 						data: encodeWav(samples, SAMPLE_RATE),
 						success: () => done(true),
-						fail: () => done(false)
-					})
-				}
-				let successCount = 0
-				const total = 2
+						fail: () => done(false),
+					});
+				};
+				let successCount = 0;
+				const total = 2;
 				const markReady = () => {
 					if (successCount === total) {
-						this.dotPath = dotPath
-						this.dashPath = dashPath
+						this.dotPath = dotPath;
+						this.dashPath = dashPath;
 						if (this.dotAudioCtx) {
-							this.dotAudioCtx.src = dotPath
+							this.dotAudioCtx.src = dotPath;
 						}
 						if (this.dashAudioCtx) {
-							this.dashAudioCtx.src = dashPath
+							this.dashAudioCtx.src = dashPath;
 						}
-						this.audioReady = true
+						this.audioReady = true;
 					}
-				}
+				};
 				writeWav(dotPath, dotSamples, (ok) => {
 					if (ok) {
-						successCount += 1
+						successCount += 1;
 					}
-					markReady()
-				})
+					markReady();
+				});
 				writeWav(dashPath, dashSamples, (ok) => {
 					if (ok) {
-						successCount += 1
+						successCount += 1;
 					}
-					markReady()
-				})
+					markReady();
+				});
 			},
 			processQueue() {
 				if (this.inputQueue.length === 0) {
-					return
+					return;
 				}
 				while (this.inputQueue.length > 0) {
-					const entry = this.inputQueue.shift()
+					const entry = this.inputQueue.shift();
 					if (!entry) {
-						continue
+						continue;
 					}
-					const mark = typeof entry === 'string' ? entry : entry.mark
-					const playAudio = typeof entry === 'string' ? true : entry.playAudio
-					this.scheduleMark(mark, playAudio)
+					const mark = typeof entry === "string" ? entry : entry.mark;
+					const playAudio = typeof entry === "string" ? true : entry.playAudio;
+					this.scheduleMark(mark, playAudio);
 				}
 			},
 			scheduleMark(mark, playAudio = true) {
-				const unitMs = this.getUnitMs()
-				const now = Date.now()
-				let startAt = Math.max(now, this.nextAvailableAt || 0)
+				const unitMs = this.getUnitMs();
+				const now = Date.now();
+				let startAt = Math.max(now, this.nextAvailableAt || 0);
 				// If we've been idle for a long gap, treat this as a new recording session.
-				if (this.lastInputEndAt && !this.keyDown['.'] && !this.keyDown['-']) {
-					const idleGapMs = startAt - this.lastInputEndAt
-					const wordGapMs = this.cwDecoder ? this.cwDecoder.getWordGapMs(unitMs) : unitMs * 10
+				if (this.lastInputEndAt && !this.keyDown["."] && !this.keyDown["-"]) {
+					const idleGapMs = startAt - this.lastInputEndAt;
+					const wordGapMs = this.cwDecoder
+						? this.cwDecoder.getWordGapMs(unitMs)
+						: unitMs * 10;
 					if (idleGapMs >= wordGapMs) {
-						this.stopRecordingAndDecode(unitMs)
-						startAt = now
+						this.stopRecordingAndDecode(unitMs);
+						startAt = now;
 					}
 				}
-				const markUnits = mark === '-' ? 3 : 1
-				const toneMs = unitMs * markUnits
-				const gapMs = unitMs
-				const durationMs = toneMs + gapMs
-				const endAt = startAt + durationMs
-				this.nextAvailableAt = endAt
-				this.lastScheduledEndAt = endAt
+				const markUnits = mark === "-" ? 3 : 1;
+				const toneMs = unitMs * markUnits;
+				const gapMs = unitMs;
+				const durationMs = toneMs + gapMs;
+				const endAt = startAt + durationMs;
+				this.nextAvailableAt = endAt;
+				this.lastScheduledEndAt = endAt;
 				// Make the UI feel immediate on mobile.
-				this.sendCW(mark)
-				const startDelay = Math.max(0, startAt - now)
+				this.sendCW(mark);
+				const startDelay = Math.max(0, startAt - now);
 				if (playAudio) {
 					const startTimer = setTimeout(() => {
-						this.playMarkNow(mark, unitMs, durationMs)
-					}, startDelay)
-					this.scheduledTimers.push(startTimer)
+						this.playMarkNow(mark, unitMs, durationMs);
+					}, startDelay);
+					this.scheduledTimers.push(startTimer);
 				}
 			},
 			rescheduleGapTimers(unitMs) {
 				if (!this.lastInputEndAt) {
-					return
+					return;
 				}
 				if (this.recordStopTimer) {
-					clearTimeout(this.recordStopTimer)
-					this.recordStopTimer = null
+					clearTimeout(this.recordStopTimer);
+					this.recordStopTimer = null;
 				}
 				if (this.charGapTimer) {
-					clearTimeout(this.charGapTimer)
-					this.charGapTimer = null
+					clearTimeout(this.charGapTimer);
+					this.charGapTimer = null;
 				}
 				// Do not stop/decode while the user is still holding a key.
-				if (this.keyDown['.'] || this.keyDown['-'] || !this.cwDecoder || !this.cwDecoder.isRecording) {
-					return
+				if (
+					this.keyDown["."] ||
+					this.keyDown["-"] ||
+					!this.cwDecoder ||
+					!this.cwDecoder.isRecording
+				) {
+					return;
 				}
-				const scheduledEndAt = this.lastInputEndAt
-				const now = Date.now()
-				const manualExtraCharUnits = this.keyMode === 'manual' ? 2 : 0
-				const charGapMs = (this.cwDecoder.getCharGapMs(unitMs) || unitMs * 3) + unitMs * manualExtraCharUnits
-				const charGapAt = scheduledEndAt + Math.max(0, charGapMs - unitMs)
-				const charDelay = Math.max(0, charGapAt - now)
+				const scheduledEndAt = this.lastInputEndAt;
+				const now = Date.now();
+				const charGapMs = this.cwDecoder.getCharGapMs(unitMs) || unitMs * 3;
+				const charGapAt = scheduledEndAt + Math.max(0, charGapMs - unitMs);
+				const charDelay = Math.max(0, charGapAt - now);
 				this.charGapTimer = setTimeout(() => {
 					if (this.lastInputEndAt !== scheduledEndAt) {
-						return
+						return;
 					}
-					if (this.keyDown['.'] || this.keyDown['-']) {
-						return
+					if (this.keyDown["."] || this.keyDown["-"]) {
+						return;
 					}
-					this.cwDecoder.addSilence(charGapMs, unitMs, this.wpm)
-				}, charDelay)
+					this.cwDecoder.addSilence(charGapMs, unitMs, this.wpm);
+				}, charDelay);
 				// lastInputEndAt already includes the 1-unit intra-character gap,
 				// so waiting the remaining units yields a full word gap.
-				const manualExtraWordUnits = this.keyMode === 'manual' ? 8 : 0
-				const wordGapMs = (this.cwDecoder.getWordGapMs(unitMs) || unitMs * 10) + unitMs * manualExtraWordUnits
-				const stopAt = scheduledEndAt + Math.max(0, wordGapMs - unitMs)
-				const stopDelay = Math.max(0, stopAt - now)
+				const wordGapMs = this.cwDecoder.getWordGapMs(unitMs) || unitMs * 7;
+				const stopAt = scheduledEndAt + Math.max(0, wordGapMs - unitMs);
+				const stopDelay = Math.max(0, stopAt - now);
 				this.recordStopTimer = setTimeout(() => {
 					if (this.lastInputEndAt !== scheduledEndAt) {
-						return
+						return;
 					}
-					if (this.keyDown['.'] || this.keyDown['-']) {
-						return
+					if (this.keyDown["."] || this.keyDown["-"]) {
+						return;
 					}
-					this.stopRecordingAndDecode(unitMs)
-				}, stopDelay)
+					this.stopRecordingAndDecode(unitMs);
+				}, stopDelay);
 			},
 			playMarkNow(mark, unitMs, durationMs) {
-				this.isKeying = true
+				this.isKeying = true;
 				const releaseTimer = setTimeout(() => {
-					this.isKeying = false
-				}, durationMs)
-				this.scheduledTimers.push(releaseTimer)
+					this.isKeying = false;
+				}, durationMs);
+				this.scheduledTimers.push(releaseTimer);
 				if (this.useWebAudio && this.webAudioCtx && this.audioReady) {
-					const buffer = mark === '-' ? this.dashBuffer : this.dotBuffer
+					const buffer = mark === "-" ? this.dashBuffer : this.dotBuffer;
 					if (!buffer) {
-						return
+						return;
 					}
-					const source = this.webAudioCtx.createBufferSource()
-					source.buffer = buffer
-					source.connect(this.webAudioCtx.destination)
+					const source = this.webAudioCtx.createBufferSource();
+					source.buffer = buffer;
+					source.connect(this.webAudioCtx.destination);
 					if (this.webAudioCtx.resume) {
-						this.webAudioCtx.resume()
+						this.webAudioCtx.resume();
 					}
-					source.start(0)
-					return
+					source.start(0);
+					return;
 				}
 				if (!this.audioReady || !this.dotAudioCtx || !this.dashAudioCtx) {
-					return
+					return;
 				}
-				const audioCtx = mark === '-' ? this.dashAudioCtx : this.dotAudioCtx
-				audioCtx.stop()
-				audioCtx.seek(0)
-				audioCtx.play()
+				const audioCtx = mark === "-" ? this.dashAudioCtx : this.dotAudioCtx;
+				audioCtx.stop();
+				audioCtx.seek(0);
+				audioCtx.play();
 			},
 			appendDecodedText(decodedText, withSpace) {
-				const text = (decodedText || '').trim()
+				const text = (decodedText || "").trim();
 				if (!text) {
-					return
+					return;
 				}
-				const payload = `${withSpace ? ' ' : ''}${text}`
+				const payload = `${withSpace ? " " : ""}${text}`;
 				for (let i = 0; i < payload.length; i += 1) {
 					for (let j = 0; j < this.decoderQueue.length - 1; j += 1) {
-						this.decoderQueue[j] = this.decoderQueue[j + 1]
+						this.decoderQueue[j] = this.decoderQueue[j + 1];
 					}
-					this.decoderQueue[this.decoderQueue.length - 1] = payload[i]
+					this.decoderQueue[this.decoderQueue.length - 1] = payload[i];
 				}
-				this.decoderText = this.decoderQueue.join('')
+				this.decoderText = this.decoderQueue.join("");
 			},
 			pushDecoderText(text) {
 				if (!text) {
-					return
+					return;
 				}
 				for (let i = 0; i < text.length; i += 1) {
-					this.pushDecoderChar(text[i])
+					this.pushDecoderChar(text[i]);
 				}
 			},
 			pushDecoderChar(char) {
 				for (let i = 0; i < this.decoderQueue.length - 1; i += 1) {
-					this.decoderQueue[i] = this.decoderQueue[i + 1]
+					this.decoderQueue[i] = this.decoderQueue[i + 1];
 				}
-				this.decoderQueue[this.decoderQueue.length - 1] = char
-				this.decoderText = this.decoderQueue.join('')
+				this.decoderQueue[this.decoderQueue.length - 1] = char;
+				this.decoderText = this.decoderQueue.join("");
 			},
 			initDecoderQueue() {
-				this.decoderQueue = new Array(20).fill(' ')
+				this.decoderQueue = new Array(20).fill(" ");
 			},
 			shiftDecoderQueue() {
 				if (!this.decoderQueue.length) {
-					return
+					return;
 				}
 				for (let i = 0; i < this.decoderQueue.length - 1; i += 1) {
-					this.decoderQueue[i] = this.decoderQueue[i + 1]
+					this.decoderQueue[i] = this.decoderQueue[i + 1];
 				}
-				this.decoderQueue[this.decoderQueue.length - 1] = ' '
-				this.decoderText = this.decoderQueue.join('')
+				this.decoderQueue[this.decoderQueue.length - 1] = " ";
+				this.decoderText = this.decoderQueue.join("");
 			},
 			applyDecodedResult(result) {
 				if (!result || !result.text) {
-					return
+					return;
 				}
-				this.appendDecodedText(result.text, result.withSpace)
+				this.appendDecodedText(result.text, result.withSpace);
 			},
 			stopRecordingAndDecode(unitMs) {
 				if (!this.cwDecoder) {
-					return
+					return;
 				}
-				this.applyDecodedResult(this.cwDecoder.stopRecordingAndDecode(unitMs, this.wpm))
+				this.applyDecodedResult(
+					this.cwDecoder.stopRecordingAndDecode(unitMs, this.wpm),
+				);
 			},
 			updateFrequencyFromScroll(scrollLeft) {
 				this.currentFrequency = calcFrequencyFromScroll({
@@ -831,8 +1046,8 @@
 					rulerSpacer: this.rulerSpacer,
 					totalBandWidth: this.totalBandWidth,
 					bandSegments: this.bandSegments,
-					pxPerMHz: this.pxPerMHz
-				})
+					pxPerMHz: this.pxPerMHz,
+				});
 			},
 			scrollLeftForFrequency(freq) {
 				return calcScrollLeftForFrequency({
@@ -840,90 +1055,105 @@
 					bandSegments: this.bandSegments,
 					rulerSpacer: this.rulerSpacer,
 					rulerViewportWidth: this.rulerViewportWidth,
-					pxPerMHz: this.pxPerMHz
-				})
+					pxPerMHz: this.pxPerMHz,
+				});
 			},
 			addWaterfallRow() {
-				const now = Date.now()
+				const now = Date.now();
 				const points = this.signals.map((signal) => ({
 					id: `wf-${now}-${signal.id}`,
 					freq: signal.freq,
 					strength: signal.strength,
-					source: signal.source
-				}))
-				const noiseCount = Math.floor(Math.random() * 3)
+					source: signal.source,
+				}));
+				const noiseCount = Math.floor(Math.random() * 3);
 				for (let i = 0; i < noiseCount; i += 1) {
 					points.push({
 						id: `wf-noise-${now}-${i}`,
 						freq: randomBandFrequency(this.bands),
 						strength: 0.2 + Math.random() * 0.4,
-						source: 'others'
-					})
+						source: "others",
+					});
 				}
 				this.waterfallRows.unshift({
 					id: `row-${now}-${Math.random().toString(16).slice(2)}`,
-					points
-				})
-				this.waterfallRows = this.waterfallRows.slice(0, WATERFALL_ROWS)
+					points,
+				});
+				this.waterfallRows = this.waterfallRows.slice(0, WATERFALL_ROWS);
 			},
 			sendCW(mark) {
 				const signal = createSignal({
-					idPrefix: 'me',
+					idPrefix: "me",
 					freq: this.currentFrequency,
 					strengthMin: 0.7,
 					strengthMax: 1.0,
 					durationMs: SIGNAL_DURATION,
-					source: 'me'
-				})
-				this.signals.push(signal)
+					source: "me",
+				});
+				this.signals.push(signal);
 			},
 			spawnNoiseSignal() {
-				const now = Date.now()
+				const now = Date.now();
 				const signal = createSignal({
-					idPrefix: 'noise',
+					idPrefix: "noise",
 					freq: randomBandFrequency(this.bands),
 					strengthMin: 0.4,
 					strengthMax: 0.9,
 					durationMs: SIGNAL_DURATION,
-					source: 'others',
-					now
-				})
-				this.signals.push(signal)
+					source: "others",
+					now,
+				});
+				this.signals.push(signal);
 			},
 			tickSignals() {
-				const now = Date.now()
-				this.signals = this.signals.filter((signal) => signal.expiresAt > now)
+				const now = Date.now();
+				this.signals = this.signals.filter((signal) => signal.expiresAt > now);
 			},
 			tickStyle(tick) {
-				return `left:${tick.x}px;`
+				return `left:${tick.x}px;`;
 			},
 			rulerSignalStyle(signal) {
-				const band = this.bandSegments.find((segment) => signal.freq >= segment.min && signal.freq <= segment.max)
-				const segment = band || this.bandSegments[0]
-				const left = this.rulerSpacer + segment.startX + (signal.freq - segment.min) * this.pxPerMHz
-				const height = 24 + signal.strength * 70
-				return `left:${left}px;height:${height}px;`
+				const band = this.bandSegments.find(
+					(segment) => signal.freq >= segment.min && signal.freq <= segment.max,
+				);
+				const segment = band || this.bandSegments[0];
+				const left =
+					this.rulerSpacer +
+					segment.startX +
+					(signal.freq - segment.min) * this.pxPerMHz;
+				const height = 24 + signal.strength * 70;
+				return `left:${left}px;height:${height}px;`;
 			},
 			waterfallRowStyle(index) {
-				const top = index * 6
-				return `top:${top}rpx;`
+				const top = index * 6;
+				return `top:${top}rpx;`;
 			},
 			waterfallPointStyle(point) {
-				const band = this.bandSegments.find((segment) => point.freq >= segment.min && point.freq <= segment.max)
-				const segment = band || this.bandSegments[0]
-				const left = this.rulerSpacer + segment.startX + (point.freq - segment.min) * this.pxPerMHz
-				const opacity = 0.25 + point.strength * 0.6
-				return `left:${left}px;opacity:${opacity};`
-			}
-		}
-	}
+				const band = this.bandSegments.find(
+					(segment) => point.freq >= segment.min && point.freq <= segment.max,
+				);
+				const segment = band || this.bandSegments[0];
+				const left =
+					this.rulerSpacer +
+					segment.startX +
+					(point.freq - segment.min) * this.pxPerMHz;
+				const opacity = 0.25 + point.strength * 0.6;
+				return `left:${left}px;opacity:${opacity};`;
+			},
+		},
+	};
 </script>
 
 <style>
 	.page {
 		min-height: 100vh;
 		padding: 30rpx;
-		background: radial-gradient(circle at top, #1f1f2b 0%, #121219 45%, #0a0a0f 100%);
+		background: radial-gradient(
+			circle at top,
+			#1f1f2b 0%,
+			#121219 45%,
+			#0a0a0f 100%
+		);
 		color: #f2f2f2;
 		font-family: "Menlo", "Consolas", "Courier New", monospace;
 		display: flex;

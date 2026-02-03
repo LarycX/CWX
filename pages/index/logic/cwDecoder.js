@@ -14,7 +14,7 @@ class CwDecoderEngine {
 		this.toneHistory = [];
 		this.toneHistoryLimit = 20;
 		this.charGapUnits = 3;
-		this.wordGapUnits = 10;
+		this.wordGapUnits = 7;
 		const callback = this.messageCallback || (() => {});
 		this.decoder = new MorseDecoder({
 			wpm: 20,
@@ -42,9 +42,9 @@ class CwDecoderEngine {
 		if (!gapMs || !unitMs) return gapMs;
 		const ratio = gapMs / unitMs;
 		let targetUnits = 1;
-		if (ratio < 1.8) {
+		if (ratio < 3) {
 			targetUnits = 1;
-		} else if (ratio < 6) {
+		} else if (ratio < 7) {
 			targetUnits = this.charGapUnits;
 		} else {
 			targetUnits = this.wordGapUnits;
